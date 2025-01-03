@@ -1,0 +1,344 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle, RefreshCw, Lightbulb, Timer } from 'lucide-react';
+
+const OPERATORS = ['+', '-', '*', '/'];
+const CARD_COUNT = 4;
+const TARGET_VALUE = 24;
+const EPSILON = 0.0001; // 用于比较浮点数
+
+const Game24Points = () => {
+  const [cards, setCards] = useState([]);
+  const [selectedCards, setSelectedCards] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [message, setMessage] = useState('');
+  const [solutions, setSolutions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [timer, setTimer] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(true);
+  const [showSolution, setShowSolution] = useState(false);
+
+  // 生成新的一组牌
+  const generateNewCards = useCallback(() => {
+      return Array(CARD_COUNT).fill(0).map(() => ({
+        value: Math.floor(Math.random() * 13) + 1,
+        isUsed: false,
+        id: Math.random()
+      }));
+    }, []);
+
+    // 计算24点的算法
+  const findSolutions = useCallback((numbers) => {
+    const solutions = new Set();
+    
+     const calculate = (a, b, op) => {
+      switch (op) {
+        case '+': return a + b;
+        case '-': return a - b;
+        case '*': return a * b;
+        case '/': return b !== 0 ? a / b : NaN;
+        default: return NaN;
+      }
+    };
+
+    const formatExpression = (exp) => {
+       // Remove unnecessary parentheses
+        let formatted = exp.replace(/\(\((.+)\)\)/g, '($1)')
+         // Remove redundant parentheses at beginning and end
+        formatted = formatted.replace(/^\((.*)\)$/, '$1');
+        return formatted
+    }
+
+
+     const solve = (nums, exp) => {
+      if (nums.length === 1) {
+         if (Math.abs(nums[0] - TARGET_VALUE) < EPSILON) {
+             solutions.add(formatExpression(exp));
+         }
+          return;
+       }
+
+      for (let i = 0; i < nums.length; i++) {
+        for (let j = i + 1; j < nums.length; j++) {
+          const a = nums[i];
+          const b = nums[j];
+          const remainingNums = nums.filter((_, idx) => idx !== i && idx !== j);
+
+          OPERATORS.forEach(op => {
+             if (op === '/' && b === 0) return;
+             const result = calculate(a, b, op);
+            if (!isNaN(result)) {
+              solve([...remainingNums, result], 
+                    exp.length === 0 ? `${a}${op}${b}` : `(${exp}${op}${b})`);
+                solve([...remainingNums, result], 
+                    exp.length === 0 ? `${a}${op}${b}` : `(${a}${op}${exp})`);
+
+            }
+          });
+        }
+      }
+    };
+
+    solve(numbers.map(n => n.value), '');
+    return Array.from(solutions);
+  }, []);
+
+  // 初始化游戏
+  useEffect(() => {
+    const initGame = async () => {
+      let newCards;
+      let solutions;
+      do {
+        newCards = generateNewCards();
+        solutions = findSolutions(newCards);
+      } while (solutions.length === 0);
+      
+      setCards(newCards);
+      setSolutions(solutions);
+      setTimer(0);
+      setIsTimerRunning(true);
+    };
+    
+    initGame();
+  }, [generateNewCards, findSolutions]);
+
+  // 计时器
+  useEffect(() => {
+    let interval;
+    if (isTimerRunning) {
+      interval = setInterval(() => {
+        setTimer(prev => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning]);
+
+  // 处理卡片选择
+  const handleCardSelect = (card) => {
+    if (card.isUsed) return;
+    
+    if (selectedCards.some(sc => sc.id === card.id)) {
+      setSelectedCards(prev => prev.filter(c => c.id !== card.id));
+    } else if (selectedCards.length < 2) {
+      setSelectedCards(prev => [...prev, card]);
+    }
+  };
+
+  // 处理运算
+    const handleCalculate = (operator) => {
+        if (selectedCards.length !== 2) {
+            setMessage('请选择两个数字');
+            return;
+        }
+    
+        const [card1, card2] = selectedCards;
+        const num1 = card1.value;
+        const num2 = card2.value;
+    
+         let result;
+    
+        try {
+           switch (operator) {
+            case '+': result = num1 + num2; break;
+            case '-': result = num1 - num2; break;
+            case '*': result = num1 * num2; break;
+            case '/':
+            if (num2 === 0) {
+                setMessage('除数不能为零');
+                return;
+            }
+                result = num1 / num2;
+                if (result !== Math.floor(result)) {
+                    setMessage('结果必须为整数');
+                    return;
+                }
+                break;
+                default: return;
+            }
+        } catch (error) {
+            setMessage('计算出错');
+            return;
+        }
+        
+        // 更新卡片状态
+        const newCards = cards.map(card => {
+            if (card.id === card1.id) {
+                return { ...card, value: result, isUsed: false };
+            }
+            if (card.id === card2.id) {
+                return { ...card, isUsed: true };
+            }
+            return card;
+        });
+        
+        const newExpression = `${num1} ${operator} ${num2} = ${result}`;
+        setHistory(prev => [...prev, newExpression]);
+        setCards(newCards);
+        setSelectedCards([]);
+        
+         // 检查是否完成
+         const remainingCards = newCards.filter(card => !card.isUsed);
+         if (remainingCards.length === 1) {
+             setIsTimerRunning(false);
+             if (Math.abs(remainingCards[0].value - TARGET_VALUE) < EPSILON) {
+                 setMessage('恭喜！你成功算出了24点！');
+                } else {
+                 setMessage('很遗憾，结果不等于24');
+                }
+        }
+    };
+
+  // 开始新游戏
+  const handleNewGame = async () => {
+    setLoading(true);
+    setShowSolution(false);
+    let newCards;
+    let solutions;
+    do {
+      newCards = generateNewCards();
+      solutions = findSolutions(newCards);
+    } while (solutions.length === 0);
+    
+    setCards(newCards);
+    setSolutions(solutions);
+    setSelectedCards([]);
+    setHistory([]);
+    setMessage('');
+    setTimer(0);
+    setIsTimerRunning(true);
+    setLoading(false);
+  };
+
+  // 显示提示
+  const handleShowHint = () => {
+     setShowSolution(!showSolution);
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+
+  const formattedSolutions = useMemo(() => {
+    if (!solutions || solutions.length === 0) {
+      return [];
+    }
+    return solutions.map((solution, index) => (
+      <div key={index} className="text-gray-600">
+        解法{index+1}: {solution}
+      </div>
+    ));
+  }, [solutions]);
+
+
+  return (
+     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-indigo-50 to-purple-50 p-4">
+      <Card className="w-full max-w-lg shadow-xl">
+        <CardHeader className="space-y-1">
+          <div className="flex justify-between items-center px-2">
+            <div className="flex items-center gap-2">
+              <Timer className="w-5 h-5 text-gray-600" />
+              <span className="text-lg font-semibold">{formatTime(timer)}</span>
+            </div>
+            <CardTitle className="text-2xl font-bold text-center">24点游戏</CardTitle>
+            <div className="w-20"></div>
+          </div>
+        </CardHeader>
+        
+        <CardContent className="space-y-6">
+          {/* 卡片区域 */}
+          <div className="grid grid-cols-4 gap-4 p-4 bg-white rounded-xl shadow-inner">
+            {cards.map((card) => (
+              <button
+                key={card.id}
+                disabled={card.isUsed}
+                onClick={() => handleCardSelect(card)}
+                className={`
+                  relative h-24 rounded-xl font-bold text-2xl transition-all duration-200
+                  ${card.isUsed ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer hover:scale-105'}
+                  ${selectedCards.some(sc => sc.id === card.id) 
+                    ? 'bg-blue-500 text-white shadow-lg' 
+                    : 'bg-white text-gray-800 shadow border-2 border-gray-100'}
+                `}
+              >
+                {card.value}
+              </button>
+            ))}
+          </div>
+
+          {/* 运算符按钮 */}
+          <div className="grid grid-cols-4 gap-3">
+            {OPERATORS.map((op) => (
+              <button
+                key={op}
+                onClick={() => handleCalculate(op)}
+                className={`
+                  p-4 text-xl font-bold rounded-xl transition-all duration-200
+                  ${selectedCards.length === 2
+                    ? 'bg-indigo-500 text-white hover:bg-indigo-600'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'}
+                `}
+                disabled={selectedCards.length !== 2}
+              >
+                {op}
+              </button>
+            ))}
+          </div>
+
+          {/* 计算历史 */}
+          <div className="bg-gray-50 p-4 rounded-xl space-y-1 h-32 overflow-y-auto">
+            {history.length === 0 ? (
+              <div className="text-gray-400 text-center">计算步骤将显示在这里</div>
+            ) : (
+              history.map((exp, index) => (
+                <div key={index} className="text-gray-600">{`第 ${index + 1} 步：${exp}`}</div>
+              ))
+            )}
+          </div>
+
+          {/* 消息提示 */}
+          {message && (
+            <Alert className={message.includes('恭喜') ? 'bg-green-50' : 'bg-blue-50'}>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* 解法提示 */}
+           {showSolution && solutions.length > 0 && (
+                <Alert className="bg-yellow-50">
+                    <Lightbulb className="h-4 w-4" />
+                    <AlertDescription>
+                      参考解法：{formattedSolutions}
+                    </AlertDescription>
+                </Alert>
+            )}
+
+          {/* 操作按钮 */}
+          <div className="flex justify-center gap-4">
+            <button
+              onClick={handleShowHint}
+              className="px-6 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 flex items-center gap-2"
+            >
+              <Lightbulb className="w-4 h-4" />
+              {showSolution ? '隐藏提示' : '提示'}
+            </button>
+            <button
+              onClick={handleNewGame}
+              disabled={loading}
+              className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center gap-2 disabled:bg-gray-400"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              新游戏
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export default Game24Points;
